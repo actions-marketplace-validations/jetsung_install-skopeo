@@ -1,0 +1,56 @@
+name: Release Skopeo Publish
+
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+  
+env:
+  RELEASE_DIR: dist
+
+jobs:
+  release:
+    # 仅在标签以 "skopeo" 开头时运行
+    if: startsWith(github.event.release.tag_name, 'skopeo')
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          # - goos: linux
+          #   goarch: arm64
+          # - goos: linux
+          #   goarch: loong64
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set GOOS and GOARCH
+        run: |
+          echo "GOOS=${{ matrix.goos }}" >> $GITHUB_ENV
+          echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
+      - name: Install Skopeo
+        uses: ./
+          
+      - name: Check Skopeo version
+        run: skopeo --version
+
+      - name: Check Skopeo info
+        run: |
+          file /usr/local/bin/skopeo
+      - name: Create release zip files
+        shell: bash
+        run: |
+          mkdir "${{ env.RELEASE_DIR }}"
+          tar -cJf "${{ env.RELEASE_DIR }}/${{ github.event.release.tag_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.xz" -C /usr/local/bin skopeo
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ env.RELEASE_DIR }}/*.tar.xz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   

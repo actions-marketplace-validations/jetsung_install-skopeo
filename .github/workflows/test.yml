@@ -1,6 +1,10 @@
 name: Test Install Skopeo Action
 
-on: [ push ]
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
 
 jobs:
   test:
