@@ -17,6 +17,7 @@ runs:
       with:
         go-version: 'stable'
     - name: Check go version
+      shell: bash
       run: go version
     - name: "Install Dependencies"
       shell: bash
@@ -28,6 +29,7 @@ runs:
           libdevmapper-dev \
           pkg-config      
     - name: Get Skopeo version
+      shell: bash
       run: |
         if [ -z "${{ inputs.version }}" ]; then
           echo "Version is empty, using latest stable"
@@ -40,10 +42,12 @@ runs:
           export SKOPEO_VERSION=${{ inputs.version }}
         fi
         echo "SKOPEO_VERSION=$SKOPEO_VERSION" >> $GITHUB_ENV
+        echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
     - name: Get Skopeo source code
+      shell: bash
       run: |
-        git clone https://github.com/containers/skopeo.git $GOPATH/src/github.com/containers/skopeo
-        cd $GOPATH/src/github.com/containers/skopeo
+        git clone https://github.com/containers/skopeo.git ${{ env.GOPATH }}/src/github.com/containers/skopeo
+        cd ${{ env.GOPATH }}/src/github.com/containers/skopeo
         if [ -n "${{ env.SKOPEO_VERSION }}" ]; then
           echo "Checking out v${{ env.SKOPEO_VERSION }}"
           git checkout v${{ env.SKOPEO_VERSION }}
@@ -51,5 +55,6 @@ runs:
         make bin/skopeo
         sudo cp bin/skopeo /usr/local/bin/skopeo
     - name: Check Skopeo version
+      shell: bash
       run: |
         skopeo --version
