@@ -5,6 +5,9 @@ branding:
   icon: "zap"
   color: "blue"
 inputs:
+  mode:
+    description: "Installation mode"
+    default: ""
   version:
     description: "Skopeo version (e.g. 1.12.0, latest). Leave empty for latest stable."
     required: false
@@ -12,14 +15,49 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Get Skopeo binary download URL
+      id: get_binary_url
+      if: ${{ inputs.mode == '' }}
+      shell: bash
+      run: |
+        RELEASES_URL="https://api.github.com/repos/jetsung/install-skopeo/releases"
+        RELEASES_JSON=$(curl -s $RELEASES_URL)
+
+        DOWNLOAD_URL=""
+
+        # Filter releases to only include those with tags starting with "skopeo-v"
+        SKOPEO_RELEASES_JSON=$(echo "$RELEASES_JSON" | jq '[.[] | select(.tag_name | startswith("skopeo-v"))]')
+
+        if [ -n "${{ inputs.version }}" ]; then
+          VERSION_TAG="skopeo-v${{ inputs.version }}"
+          # Attempt to find the URL for the specific version from the filtered list
+          DOWNLOAD_URL=$(echo "$SKOPEO_RELEASES_JSON" | jq -r --arg ver "$VERSION_TAG" '.[] | select(.tag_name == $ver) | .assets[0].browser_download_url')
+        fi
+
+        if [ -z "$DOWNLOAD_URL" ]; then
+          # If version not specified, or if specified version was not found, get the latest one from the filtered list
+          DOWNLOAD_URL=$(echo "$SKOPEO_RELEASES_JSON" | jq -r '.[0].assets[0].browser_download_url')
+        fi
+
+        if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" == "null" ]; then
+          echo "Could not find a suitable Skopeo binary release."
+          exit 1
+        fi
+        echo "DOWNLOAD_URL=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+    - name: Install Skopeo from binary
+      if: ${{ inputs.mode == '' }}
+      shell: bash
+      run: |
+        curl -L "${{ steps.get_binary_url.outputs.DOWNLOAD_URL }}" -o skopeo.tar.xz
+        tar xvf skopeo.tar.xz
+        sudo mv skopeo /usr/local/bin/skopeo
     - name: Setup Go environment
-      uses: actions/setup-go@v5
+      if: ${{ inputs.mode == 'build' }}
+      uses: actions/setup-go@v6
       with:
         go-version: 'stable'
-    - name: Check go version
-      shell: bash
-      run: go version
     - name: "Install Dependencies"
+      if: ${{ inputs.mode == 'build' }}
       shell: bash
       run: |
         sudo apt-get update
@@ -27,39 +65,30 @@ runs:
           libgpgme-dev \
           libassuan-dev \
           libdevmapper-dev \
-          pkg-config      
-    - name: Get Skopeo version
+          pkg-config
+    - name: Get Skopeo source and build
+      if: ${{ inputs.mode == 'build' }}
       shell: bash
       run: |
+        export GOPATH=$(go env GOPATH)
+        git clone https://github.com/containers/skopeo.git $GOPATH/src/github.com/containers/skopeo
+        cd $GOPATH/src/github.com/containers/skopeo
+        SKOPEO_VERSION=""
         if [ -z "${{ inputs.version }}" ]; then
           echo "Version is empty, using latest stable"
-          export SKOPEO_VERSION=$(curl -s https://api.github.com/repos/containers/skopeo/releases/latest | jq -r '.tag_name' | sed 's/v//')
-        elif [[ "${{ inputs.version }}" == "dev" || "${{ inputs.version }}" == "master" ]]; then
-          echo "Version is dev, using master"
-          export SKOPEO_VERSION=""
-        else
-          echo "Version is ${{ inputs.version }}, using it"
-          export SKOPEO_VERSION=${{ inputs.version }}
+          SKOPEO_VERSION=$(curl -s https://api.github.com/repos/containers/skopeo/releases/latest | jq -r '.tag_name')
+        elif [[ "${{ inputs.version }}" != "dev" && "${{ inputs.version }}" != "master" ]]; then
+          SKOPEO_VERSION="v${{ inputs.version }}"
         fi
-        echo "SKOPEO_VERSION=$SKOPEO_VERSION" >> $GITHUB_ENV
-        echo "GOPATH=$(go env GOPATH)" >> $GITHUB_ENV
-    - name: Get Skopeo source code
-      shell: bash
-      run: |
-        git clone https://github.com/containers/skopeo.git ${{ env.GOPATH }}/src/github.com/containers/skopeo
-        cd ${{ env.GOPATH }}/src/github.com/containers/skopeo
-        if [ -n "${{ env.SKOPEO_VERSION }}" ]; then
-          echo "Checking out v${{ env.SKOPEO_VERSION }}"
-          git checkout v${{ env.SKOPEO_VERSION }}
+        if [ -n "$SKOPEO_VERSION" ]; then
+          echo "Checking out $SKOPEO_VERSION"
+          git checkout $SKOPEO_VERSION
         fi
-        go mod tidy
-        go mod vendor
-
         make bin/skopeo
         sudo cp bin/skopeo /usr/local/bin/skopeo
     - name: Setup Policy
       shell: bash
-      run: | 
+      run: |
         mkdir -p ~/.config/containers
         cp ${{ github.action_path }}/policy.json ~/.config/containers/policy.json
     - name: Check Skopeo version
